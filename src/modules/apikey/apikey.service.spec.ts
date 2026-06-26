@@ -231,7 +231,10 @@ describe('ApiKeysService', () => {
 
       const result = await service.getLastUsed(mockUserId, mockKeyId);
 
-      expect(redisHget).toHaveBeenCalledWith(LAST_USED_HASH, mockKeyId);
+      expect(redisHget).toHaveBeenCalledWith(
+        LAST_USED_HASH,
+        `${mockUserId}:${mockKeyId}`,
+      );
       expect(result).toEqual({ lastUsedAt: new Date(timestamp) });
     });
 

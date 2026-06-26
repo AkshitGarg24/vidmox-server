@@ -22,5 +22,6 @@ model ApiKey {
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
 
+  @@index([userId, revokedAt])
   @@map("api_key")
 }

@@ -10,3 +10,6 @@ CREATE TABLE "api_key" (
 
     CONSTRAINT "api_key_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE INDEX "api_key_user_id_revoked_at_idx" ON "api_key"("user_id", "revoked_at");

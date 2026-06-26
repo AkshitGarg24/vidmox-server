@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClerkAuthGuard } from './clerk.guard';
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { REDIS_CLIENT } from 'src/infra/redis.module';
 import { API_KEY_CACHE, CachedKey } from 'src/infra/apiKeyCache.module';
 import { PrismaService } from 'src/modules/prisma/prisma.service';
@@ -155,9 +159,11 @@ describe('ClerkAuthGuard', () => {
       expect(mockRequest.user).toEqual({ id: mockUserId, keyId: mockKeyId });
     });
 
-    it('should throw UnauthorizedException when Redis has invalid flag', async () => {
+    it('should throw UnauthorizedException when Redis has per-digest invalid flag', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
-      mockRedisInstance.hgetall.mockResolvedValue({ invalid: '1' });
+      mockRedisInstance.hgetall.mockResolvedValue({
+        'invalid:mocked-digest': '1',
+      });
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow(
         UnauthorizedException,
@@ -167,19 +173,27 @@ describe('ClerkAuthGuard', () => {
       );
     });
 
-    it('should throw UnauthorizedException when Redis has mismatched digest', async () => {
+    it('should fall through to DB when Redis has mismatched digest but no per-digest invalid marker', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
       mockRedisInstance.hgetall.mockResolvedValue({
         userId: mockUserId,
         apiKeyDigest: 'different-digest',
       });
+      mockPrismaInstance.apiKey.findFirst.mockResolvedValue({
+        id: mockKeyId,
+        userId: mockUserId,
+        prefix: 'VMX_...',
+        value: 'argon2hash',
+        createdAt: new Date(),
+        lastUsedAt: null,
+        revokedAt: null,
+      });
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
 
-      await expect(guard.canActivate(mockContext)).rejects.toThrow(
-        UnauthorizedException,
-      );
-      await expect(guard.canActivate(mockContext)).rejects.toThrow(
-        'Invalid API key',
-      );
+      const result = await guard.canActivate(mockContext);
+
+      expect(result).toBe(true);
+      expect(mockRequest.user).toEqual({ id: mockUserId, keyId: mockKeyId });
     });
 
     it('should return true when DB lookup succeeds and argon2 verifies', async () => {
@@ -226,7 +240,7 @@ describe('ClerkAuthGuard', () => {
 
       expect(redisHset).toHaveBeenCalledWith(
         `vmx:api_key:${VERSION}:${mockKeyId}`,
-        { invalid: '1' },
+        { 'invalid:mocked-digest': '1' },
       );
       expect(redisExpire).toHaveBeenCalledWith(
         `vmx:api_key:${VERSION}:${mockKeyId}`,
@@ -272,7 +286,7 @@ describe('ClerkAuthGuard', () => {
       );
     });
 
-    it('should catch Prisma errors and rethrow as UnauthorizedException', async () => {
+    it('should catch Prisma errors and throw InternalServerErrorException', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockRejectedValue(
@@ -280,20 +294,20 @@ describe('ClerkAuthGuard', () => {
       );
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow(
-        UnauthorizedException,
+        InternalServerErrorException,
       );
     });
 
-    it('should catch Redis errors and rethrow as UnauthorizedException', async () => {
+    it('should catch Redis errors and throw InternalServerErrorException', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
       mockRedisInstance.hgetall.mockRejectedValue(new Error('Redis timeout'));
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow(
-        UnauthorizedException,
+        InternalServerErrorException,
       );
     });
 
-    it('should catch argon2 errors and rethrow as UnauthorizedException', async () => {
+    it('should catch argon2 errors and throw InternalServerErrorException', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockResolvedValue({
@@ -304,7 +318,7 @@ describe('ClerkAuthGuard', () => {
       (argon2.verify as jest.Mock).mockRejectedValue(new Error('Argon2 error'));
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow(
-        UnauthorizedException,
+        InternalServerErrorException,
       );
     });
   });
@@ -424,6 +438,41 @@ describe('ClerkAuthGuard', () => {
       await guard.canActivate(mockContext);
 
       expect(redisSet).not.toHaveBeenCalled();
+    });
+
+    it('should not propagate Redis lock failures from trackApiKeyLastUsed', async () => {
+      mockRequest.headers['x-api-key'] = `VMX_${mockKeyId}_secret`;
+      (extractKeyId as jest.Mock).mockReturnValue(mockKeyId);
+      (digest as jest.Mock).mockReturnValue(mockDigest);
+      mockLocalCacheInstance.get.mockReturnValue({
+        userId: mockUserId,
+        expiresAt: Date.now() + 100000,
+        apiKeyDigest: mockDigest,
+      });
+      redisSet.mockRejectedValue(new Error('Redis lock failed'));
+
+      const result = await guard.canActivate(mockContext);
+
+      expect(result).toBe(true);
+      expect(mockRequest.user).toEqual({ id: mockUserId, keyId: mockKeyId });
+    });
+
+    it('should not propagate Redis hset failures from trackApiKeyLastUsed', async () => {
+      mockRequest.headers['x-api-key'] = `VMX_${mockKeyId}_secret`;
+      (extractKeyId as jest.Mock).mockReturnValue(mockKeyId);
+      (digest as jest.Mock).mockReturnValue(mockDigest);
+      mockLocalCacheInstance.get.mockReturnValue({
+        userId: mockUserId,
+        expiresAt: Date.now() + 100000,
+        apiKeyDigest: mockDigest,
+      });
+      redisSet.mockResolvedValue('OK');
+      redisHset.mockRejectedValue(new Error('Redis hset failed'));
+
+      const result = await guard.canActivate(mockContext);
+
+      expect(result).toBe(true);
+      expect(mockRequest.user).toEqual({ id: mockUserId, keyId: mockKeyId });
     });
   });
 });

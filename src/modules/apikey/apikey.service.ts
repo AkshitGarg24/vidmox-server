@@ -59,7 +59,10 @@ export class ApiKeysService {
   }
 
   async getLastUsed(userId: string, keyId: string) {
-    const redisValue = await this.redis.hget(LAST_USED_HASH, keyId);
+    const redisValue = await this.redis.hget(
+      LAST_USED_HASH,
+      `${userId}:${keyId}`,
+    );
     if (redisValue) {
       return {
         lastUsedAt: new Date(Number(redisValue)),

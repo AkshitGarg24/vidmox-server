@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   Inject,
   Injectable,
+  InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -35,7 +36,7 @@ export class ClerkAuthGuard implements CanActivate {
     private readonly localCache: LRUCache<string, CachedKey>,
   ) {}
 
-  private async trackApiKeyLastUsed(keyId: string) {
+  private async trackApiKeyLastUsed(userId: string, keyId: string) {
     const lockKey = `vmx:api_key:last_used_lock:${VERSION}:${keyId}`;
     const ok = await this.redis.set(
       lockKey,
@@ -45,7 +46,20 @@ export class ClerkAuthGuard implements CanActivate {
       'NX',
     );
     if (!ok) return;
-    await this.redis.hset(LAST_USED_HASH, keyId, Date.now().toString());
+    await this.redis.hset(
+      LAST_USED_HASH,
+      `${userId}:${keyId}`,
+      Date.now().toString(),
+    );
+  }
+
+  private trackLastUsed(userId: string, keyId: string): void {
+    this.trackApiKeyLastUsed(userId, keyId).catch((err) =>
+      console.error(
+        `ClerkGuard: failed to track last used for keyId=${keyId}`,
+        err,
+      ),
+    );
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -64,16 +78,16 @@ export class ClerkAuthGuard implements CanActivate {
             id: c.userId,
             keyId,
           };
-          void this.trackApiKeyLastUsed(keyId);
+          this.trackLastUsed(c.userId, keyId);
           return true;
         }
         const rKeyDigest = `vmx:api_key:${VERSION}:${keyId}`;
         const rDigest = await this.redis.hgetall(rKeyDigest);
         if (rDigest && Object.keys(rDigest).length > 0) {
-          if (rDigest.invalid === '1' || rDigest.apiKeyDigest !== d) {
+          if (rDigest[`invalid:${d}`] === '1') {
             throw new UnauthorizedException('Invalid API key');
           }
-          if (rDigest.userId) {
+          if (rDigest.userId && rDigest.apiKeyDigest === d) {
             this.localCache.set(lruKey, {
               userId: rDigest.userId,
               expiresAt: Date.now() + LRU_SOFT_TTL_MS,
@@ -83,7 +97,7 @@ export class ClerkAuthGuard implements CanActivate {
               id: rDigest.userId,
               keyId,
             };
-            void this.trackApiKeyLastUsed(keyId);
+            this.trackLastUsed(rDigest.userId, keyId);
             return true;
           }
         }
@@ -101,7 +115,7 @@ export class ClerkAuthGuard implements CanActivate {
         const isValid = await argon2.verify(record.value, apiKey);
         if (!isValid) {
           await this.redis.hset(rKeyDigest, {
-            invalid: '1',
+            [`invalid:${d}`]: '1',
           });
           await this.redis.expire(rKeyDigest, REDIS_HARD_TTL);
           throw new UnauthorizedException('Invalid API key');
@@ -115,13 +129,19 @@ export class ClerkAuthGuard implements CanActivate {
           id: record.userId,
           keyId,
         };
-        void this.trackApiKeyLastUsed(keyId);
+        this.trackLastUsed(record.userId, keyId);
         return true;
       } catch (error) {
         if (error instanceof UnauthorizedException) {
           throw error;
         }
-        throw new UnauthorizedException('Invalid API key');
+        console.error(
+          `ClerkGuard: infrastructure error during API key auth (keyId=${keyId})`,
+          error,
+        );
+        throw new InternalServerErrorException(
+          'Authentication service unavailable',
+        );
       }
     } else {
       const authorization = request.headers.authorization;

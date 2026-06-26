@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { LRUCache } from 'lru-cache';
+import { LRU_SOFT_TTL_MS } from 'src/configs/constants';
 
 export interface CacheInterface {
   user_id: string;
@@ -17,7 +18,7 @@ export const LRU_CACHE = 'LRU_CACHE';
       useFactory: () => {
         return new LRUCache<string, CacheInterface>({
           max: 5000,
-          ttl: 5 * 60 * 1000,
+          ttl: LRU_SOFT_TTL_MS,
           allowStale: false,
           updateAgeOnGet: true,
           updateAgeOnHas: false,

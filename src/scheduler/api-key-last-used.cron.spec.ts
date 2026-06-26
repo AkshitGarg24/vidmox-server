@@ -16,12 +16,12 @@ describe('ApiKeyUsageCron', () => {
     hdel: redisHdel,
   } as unknown as jest.Mocked<Redis>;
 
-  const apiKeyUpdate = jest.fn();
+  const apiKeyUpdateMany = jest.fn();
   const prismaTransaction = jest.fn();
 
   const mockPrismaInstance = {
     apiKey: {
-      update: apiKeyUpdate,
+      updateMany: apiKeyUpdateMany,
     },
     $transaction: prismaTransaction,
   } as unknown as jest.Mocked<PrismaService>;
@@ -46,8 +46,8 @@ describe('ApiKeyUsageCron', () => {
 
   it('should read LAST_USED_HASH, write valid entries to DB, then hdel processed keys', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
-      'key-1': '1700000000000',
-      'key-2': '1700000001000',
+      'user:key-1': '1700000000000',
+      'user:key-2': '1700000001000',
     });
     mockPrismaInstance.$transaction.mockResolvedValue([]);
 
@@ -55,23 +55,27 @@ describe('ApiKeyUsageCron', () => {
 
     expect(redisHgetall).toHaveBeenCalledWith(LAST_USED_HASH);
 
-    expect(apiKeyUpdate).toHaveBeenCalledTimes(2);
-    expect(apiKeyUpdate).toHaveBeenCalledWith({
+    expect(apiKeyUpdateMany).toHaveBeenCalledTimes(2);
+    expect(apiKeyUpdateMany).toHaveBeenCalledWith({
       where: { id: 'key-1', revokedAt: null },
       data: { lastUsedAt: new Date(1700000000000) },
     });
-    expect(apiKeyUpdate).toHaveBeenCalledWith({
+    expect(apiKeyUpdateMany).toHaveBeenCalledWith({
       where: { id: 'key-2', revokedAt: null },
       data: { lastUsedAt: new Date(1700000001000) },
     });
     expect(prismaTransaction).toHaveBeenCalledTimes(1);
 
-    expect(redisHdel).toHaveBeenCalledWith(LAST_USED_HASH, 'key-1', 'key-2');
+    expect(redisHdel).toHaveBeenCalledWith(
+      LAST_USED_HASH,
+      'user:key-1',
+      'user:key-2',
+    );
   });
 
   it('should hdel processed keys AFTER the DB transaction succeeds', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
-      'key-1': '1700000000000',
+      'user:key-1': '1700000000000',
     });
     mockPrismaInstance.$transaction.mockResolvedValue([]);
 
@@ -105,32 +109,32 @@ describe('ApiKeyUsageCron', () => {
 
   it('should filter out entries with NaN timestamps', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
-      'key-valid': '1700000000000',
-      'key-nan': 'not-a-number',
+      'user:key-valid': '1700000000000',
+      'user:key-nan': 'not-a-number',
     });
     mockPrismaInstance.$transaction.mockResolvedValue([]);
 
     await cron.flushLastUsed();
 
-    expect(apiKeyUpdate).toHaveBeenCalledTimes(1);
-    expect(apiKeyUpdate).toHaveBeenCalledWith({
+    expect(apiKeyUpdateMany).toHaveBeenCalledTimes(1);
+    expect(apiKeyUpdateMany).toHaveBeenCalledWith({
       where: { id: 'key-valid', revokedAt: null },
       data: { lastUsedAt: new Date(1700000000000) },
     });
-    expect(redisHdel).toHaveBeenCalledWith(LAST_USED_HASH, 'key-valid');
+    expect(redisHdel).toHaveBeenCalledWith(LAST_USED_HASH, 'user:key-valid');
   });
 
   it('should filter out entries with empty keyId', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
       '': '1700000000000',
-      'key-valid': '1700000000000',
+      'user:key-valid': '1700000000000',
     });
     mockPrismaInstance.$transaction.mockResolvedValue([]);
 
     await cron.flushLastUsed();
 
-    expect(apiKeyUpdate).toHaveBeenCalledTimes(1);
-    expect(apiKeyUpdate).toHaveBeenCalledWith({
+    expect(apiKeyUpdateMany).toHaveBeenCalledTimes(1);
+    expect(apiKeyUpdateMany).toHaveBeenCalledWith({
       where: { id: 'key-valid', revokedAt: null },
       data: { lastUsedAt: new Date(1700000000000) },
     });
@@ -138,7 +142,7 @@ describe('ApiKeyUsageCron', () => {
 
   it('should not hdel any keys when the DB transaction fails', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
-      'key-1': '1700000000000',
+      'user:key-1': '1700000000000',
     });
     mockPrismaInstance.$transaction.mockRejectedValue(
       new Error('Transaction failed'),

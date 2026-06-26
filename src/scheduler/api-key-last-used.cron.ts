@@ -19,24 +19,27 @@ export class ApiKeyUsageCron {
       return;
     }
     const entries = Object.entries(map)
-      .map(([keyId, ts]) => ({
-        keyId,
-        ts: new Date(Number(ts)),
-      }))
+      .map(([composite, ts]) => {
+        const sep = composite.indexOf(':');
+        if (sep === -1) return null;
+        const tsDate = new Date(Number(ts));
+        if (!tsDate || Number.isNaN(tsDate.getTime())) return null;
+        return { composite, keyId: composite.slice(sep + 1), ts: tsDate };
+      })
       .filter(
-        (x) => x.keyId && x.ts instanceof Date && !Number.isNaN(x.ts.getTime()),
+        (x): x is { composite: string; keyId: string; ts: Date } => x !== null,
       );
 
     if (entries.length === 0) return;
 
     const updates = entries.map((entry) =>
-      this.prisma.apiKey.update({
+      this.prisma.apiKey.updateMany({
         where: { id: entry.keyId, revokedAt: null },
         data: { lastUsedAt: entry.ts },
       }),
     );
 
     await this.prisma.$transaction(updates);
-    await this.redis.hdel(LAST_USED_HASH, ...entries.map((e) => e.keyId));
+    await this.redis.hdel(LAST_USED_HASH, ...entries.map((e) => e.composite));
   }
 }
