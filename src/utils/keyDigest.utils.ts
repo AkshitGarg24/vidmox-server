@@ -7,6 +7,9 @@ import crypto from 'crypto';
  * @returns The digest as a lowercase hexadecimal string.
  */
 export function digest(str: string): string {
-  const secret = process.env.REDIS_KEY_SECRET || '';
+  const secret = process.env.REDIS_KEY_SECRET;
+  if (!secret) {
+    throw new Error('REDIS_KEY_SECRET is not configured');
+  }
   return crypto.createHmac('sha256', secret).update(str).digest('hex');
 }
