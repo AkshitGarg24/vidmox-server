@@ -44,7 +44,7 @@ describe('ApiKeyUsageCron', () => {
     expect(cron).toBeDefined();
   });
 
-  it('should read LAST_USED_HASH, write valid entries to DB, then hdel processed keys', async () => {
+  it('should read LAST_USED_HASH, hdel processed keys, then write valid entries to DB', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
       'user:key-1': '1700000000000',
       'user:key-2': '1700000001000',
@@ -54,6 +54,12 @@ describe('ApiKeyUsageCron', () => {
     await cron.flushLastUsed();
 
     expect(redisHgetall).toHaveBeenCalledWith(LAST_USED_HASH);
+
+    expect(redisHdel).toHaveBeenCalledWith(
+      LAST_USED_HASH,
+      'user:key-1',
+      'user:key-2',
+    );
 
     expect(apiKeyUpdateMany).toHaveBeenCalledTimes(2);
     expect(apiKeyUpdateMany).toHaveBeenCalledWith({
@@ -65,15 +71,9 @@ describe('ApiKeyUsageCron', () => {
       data: { lastUsedAt: new Date(1700000001000) },
     });
     expect(prismaTransaction).toHaveBeenCalledTimes(1);
-
-    expect(redisHdel).toHaveBeenCalledWith(
-      LAST_USED_HASH,
-      'user:key-1',
-      'user:key-2',
-    );
   });
 
-  it('should hdel processed keys AFTER the DB transaction succeeds', async () => {
+  it('should hdel processed keys BEFORE the DB transaction', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
       'user:key-1': '1700000000000',
     });
@@ -81,10 +81,10 @@ describe('ApiKeyUsageCron', () => {
 
     await cron.flushLastUsed();
 
-    const transactionCallIndex = prismaTransaction.mock.invocationCallOrder[0];
     const hdelCallIndex = redisHdel.mock.invocationCallOrder[0];
+    const transactionCallIndex = prismaTransaction.mock.invocationCallOrder[0];
 
-    expect(transactionCallIndex).toBeLessThan(hdelCallIndex);
+    expect(hdelCallIndex).toBeLessThan(transactionCallIndex);
   });
 
   it('should return early when LAST_USED_HASH is empty', async () => {
@@ -138,9 +138,10 @@ describe('ApiKeyUsageCron', () => {
       where: { id: 'key-valid', revokedAt: null },
       data: { lastUsedAt: new Date(1700000000000) },
     });
+    expect(redisHdel).toHaveBeenCalledWith(LAST_USED_HASH, 'user:key-valid');
   });
 
-  it('should not hdel any keys when the DB transaction fails', async () => {
+  it('should hdel keys before the DB transaction, even when the transaction fails', async () => {
     mockRedisInstance.hgetall.mockResolvedValue({
       'user:key-1': '1700000000000',
     });
@@ -150,7 +151,7 @@ describe('ApiKeyUsageCron', () => {
 
     await expect(cron.flushLastUsed()).rejects.toThrow('Transaction failed');
 
-    expect(redisHdel).not.toHaveBeenCalled();
+    expect(redisHdel).toHaveBeenCalledWith(LAST_USED_HASH, 'user:key-1');
   });
 
   it('should propagate Redis hgetall errors', async () => {

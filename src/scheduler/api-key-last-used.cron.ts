@@ -45,6 +45,10 @@ export class ApiKeyUsageCron {
 
     if (entries.length === 0) return;
 
+    // Delete from Redis immediately after snapshot so a concurrent request
+    // writing a newer timestamp won't be erased after the DB transaction.
+    await this.redis.hdel(LAST_USED_HASH, ...entries.map((e) => e.composite));
+
     // Update every matching DB record in a single transaction.
     const updates = entries.map((entry) =>
       this.prisma.apiKey.updateMany({
@@ -54,8 +58,5 @@ export class ApiKeyUsageCron {
     );
 
     await this.prisma.$transaction(updates);
-
-    // Remove processed entries from Redis so they are not flushed again.
-    await this.redis.hdel(LAST_USED_HASH, ...entries.map((e) => e.composite));
   }
 }

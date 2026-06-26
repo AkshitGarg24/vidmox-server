@@ -162,5 +162,9 @@ describe('extractKeyId', () => {
       const longId = 'abcdef1234567890abcdef12345678900'; // 33 chars
       expect(extractKeyId(`VMX_${longId}_secret`)).toBeNull();
     });
+
+    it('should return null when the key ends with an underscore after the keyId (empty secret)', () => {
+      expect(extractKeyId(`VMX_${validKeyId}_`)).toBeNull();
+    });
   });
 });

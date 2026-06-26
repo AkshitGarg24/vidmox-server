@@ -93,25 +93,26 @@ export class ClerkAuthGuard implements CanActivate {
           return true;
         }
 
-        // Layer 2 — Redis cache (userId + apiKeyDigest, or invalid:<digest>).
+        // Layer 2 — Redis cache (userId + apiKeyDigest).
         const rKeyDigest = `vmx:api_key:${VERSION}:${keyId}`;
-        const rDigest = await this.redis.hgetall(rKeyDigest);
-        if (rDigest && Object.keys(rDigest).length > 0) {
-          // Negative cache hit — this digest was previously marked invalid.
-          if (rDigest[`invalid:${d}`] === '1') {
-            throw new UnauthorizedException('Invalid API key');
-          }
-          // Valid cache hit — rehydrate LRU and authenticate.
-          if (rDigest.userId && rDigest.apiKeyDigest === d) {
-            this.localCache.set(lruKey, {
-              userId: rDigest.userId,
-              expiresAt: Date.now() + LRU_SOFT_TTL_MS,
-              apiKeyDigest: d,
-            });
-            request.user = { id: rDigest.userId, keyId };
-            this.trackLastUsed(rDigest.userId, keyId);
-            return true;
-          }
+        const invalidKey = `vmx:api_key:invalid:${VERSION}:${d}`;
+        const [rDigest, isInvalid] = await Promise.all([
+          this.redis.hgetall(rKeyDigest),
+          this.redis.exists(invalidKey),
+        ]);
+        if (isInvalid) {
+          throw new UnauthorizedException('Invalid API key');
+        }
+        // Valid cache hit — rehydrate LRU and authenticate.
+        if (rDigest?.userId && rDigest.apiKeyDigest === d) {
+          this.localCache.set(lruKey, {
+            userId: rDigest.userId,
+            expiresAt: Date.now() + LRU_SOFT_TTL_MS,
+            apiKeyDigest: d,
+          });
+          request.user = { id: rDigest.userId, keyId };
+          this.trackLastUsed(rDigest.userId, keyId);
+          return true;
         }
 
         // Layer 3 — PostgreSQL (source of truth).
@@ -126,8 +127,7 @@ export class ClerkAuthGuard implements CanActivate {
         const isValid = await argon2.verify(record.value, apiKey);
         if (!isValid) {
           // Cache the failed digest so Redis rejects it next time.
-          await this.redis.hset(rKeyDigest, { [`invalid:${d}`]: '1' });
-          await this.redis.expire(rKeyDigest, REDIS_HARD_TTL);
+          await this.redis.set(invalidKey, '1', 'EX', REDIS_HARD_TTL);
           throw new UnauthorizedException('Invalid API key');
         }
 

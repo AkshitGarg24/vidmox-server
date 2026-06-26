@@ -58,12 +58,14 @@ describe('ClerkAuthGuard', () => {
   const redisHgetall = jest.fn();
   const redisHset = jest.fn();
   const redisExpire = jest.fn();
+  const redisExists = jest.fn();
 
   const mockRedisInstance = {
     set: redisSet,
     hgetall: redisHgetall,
     hset: redisHset,
     expire: redisExpire,
+    exists: redisExists,
   } as unknown as jest.Mocked<Redis>;
 
   const cacheGet = jest.fn();
@@ -129,6 +131,7 @@ describe('ClerkAuthGuard', () => {
         expiresAt: Date.now() - 1000,
         apiKeyDigest: mockDigest,
       });
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({
         userId: mockUserId,
         apiKeyDigest: mockDigest,
@@ -143,6 +146,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should return true when Redis has valid userId with matching digest', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({
         userId: mockUserId,
         apiKeyDigest: mockDigest,
@@ -161,9 +165,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should throw UnauthorizedException when Redis has per-digest invalid flag', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
-      mockRedisInstance.hgetall.mockResolvedValue({
-        'invalid:mocked-digest': '1',
-      });
+      mockRedisInstance.exists.mockResolvedValue(1);
 
       await expect(guard.canActivate(mockContext)).rejects.toThrow(
         UnauthorizedException,
@@ -175,6 +177,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should fall through to DB when Redis has mismatched digest but no per-digest invalid marker', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({
         userId: mockUserId,
         apiKeyDigest: 'different-digest',
@@ -198,6 +201,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should return true when DB lookup succeeds and argon2 verifies', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockResolvedValue({
         id: mockKeyId,
@@ -226,6 +230,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should set Redis invalid and throw when argon2 verify fails', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockResolvedValue({
         id: mockKeyId,
@@ -238,18 +243,17 @@ describe('ClerkAuthGuard', () => {
         UnauthorizedException,
       );
 
-      expect(redisHset).toHaveBeenCalledWith(
-        `vmx:api_key:${VERSION}:${mockKeyId}`,
-        { 'invalid:mocked-digest': '1' },
-      );
-      expect(redisExpire).toHaveBeenCalledWith(
-        `vmx:api_key:${VERSION}:${mockKeyId}`,
+      expect(redisSet).toHaveBeenCalledWith(
+        `vmx:api_key:invalid:${VERSION}:${mockDigest}`,
+        '1',
+        'EX',
         REDIS_HARD_TTL,
       );
     });
 
     it('should throw UnauthorizedException when key not found in DB', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockResolvedValue(null);
 
@@ -263,6 +267,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should query DB with revokedAt: null filter', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockResolvedValue(null);
 
@@ -288,6 +293,7 @@ describe('ClerkAuthGuard', () => {
 
     it('should catch Prisma errors and throw InternalServerErrorException', async () => {
       mockLocalCacheInstance.get.mockReturnValue(undefined);
+      mockRedisInstance.exists.mockResolvedValue(0);
       mockRedisInstance.hgetall.mockResolvedValue({});
       mockPrismaInstance.apiKey.findFirst.mockRejectedValue(
         new Error('Prisma connection failed'),
