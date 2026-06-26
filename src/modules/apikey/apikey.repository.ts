@@ -1,10 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+/**
+ * ApiKeyRepository — Prisma-based data-access layer for API keys.
+ *
+ * All queries filter by `revokedAt: null` to transparently exclude soft-deleted
+ * keys. The plain-text key value is **never** persisted; only the Argon2id hash
+ * is stored in the `value` column.
+ */
 @Injectable()
 export class ApiKeyRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Return the count of active (non-revoked) keys belonging to a user. */
   async countApiKeys(userId: string) {
     return this.prisma.apiKey.count({
       where: {
@@ -14,6 +22,12 @@ export class ApiKeyRepository {
     });
   }
 
+  /**
+   * Persist a new API key record.
+   *
+   * @param hash — Argon2id hash of the full plain-text key.
+   * @param prefix — human-readable identifer (`VMX_{keyId}...`) shown in UIs.
+   */
   async createApiKey(
     userId: string,
     keyId: string,
@@ -30,6 +44,7 @@ export class ApiKeyRepository {
     });
   }
 
+  /** List all active keys for a user (metadata only, no hash values). */
   async listApiKeys(userId: string) {
     return this.prisma.apiKey.findMany({
       where: {
@@ -47,6 +62,12 @@ export class ApiKeyRepository {
     });
   }
 
+  /**
+   * Soft-delete an API key by setting `revokedAt`.
+   *
+   * Uses `updateMany` (rather than `update`) so the query is a no-op when
+   * the key is already revoked or belongs to a different user.
+   */
   async deleteApiKey(userId: string, keyId: string) {
     await this.prisma.apiKey.updateMany({
       where: {
@@ -60,6 +81,7 @@ export class ApiKeyRepository {
     });
   }
 
+  /** Fetch a single active key by its composite key (userId + keyId). */
   async getApikey(userId: string, keyId: string) {
     return this.prisma.apiKey.findFirst({
       where: {
