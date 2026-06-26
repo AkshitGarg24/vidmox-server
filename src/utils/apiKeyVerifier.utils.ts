@@ -1,3 +1,9 @@
+/**
+ * Extracts a key ID from a VMX-formatted key string.
+ *
+ * @param plainKey - The key string to inspect.
+ * @returns The 32-character hexadecimal key ID if the input matches the expected format, `null` otherwise.
+ */
 export function extractKeyId(plainKey: string): string | null {
   if (!plainKey || !plainKey.startsWith('VMX_')) return null;
   const parts = plainKey.split('_');
