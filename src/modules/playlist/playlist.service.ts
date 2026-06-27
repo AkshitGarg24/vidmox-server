@@ -10,23 +10,23 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { PlaylistRepository } from './playlist.repository';
+import { PlaylistRepository, PlaylistLimitError } from './playlist.repository';
 import { PlaylistDto } from './dto/playlist.dto';
 import { PLAYLIST_LIMIT } from 'src/configs/constants';
 import { Prisma } from 'generated/prisma/client';
 
 @Injectable()
 export class PlaylistService {
-  constructor(
-    private readonly playlistRepository: PlaylistRepository,
-    private readonly logger = new Logger(PlaylistService.name),
-  ) {}
+  private readonly logger = new Logger(PlaylistService.name);
+
+  constructor(private readonly playlistRepository: PlaylistRepository) {}
 
   /**
    * Creates a new playlist for the authenticated user.
    *
-   * Checks the per-user cap before creating. If the user already
-   * has PLAYLIST_LIMIT playlists the request is rejected.
+   * Delegates to createWithinLimit which atomically checks the per-user
+   * cap and inserts inside a Serializable transaction, preventing
+   * concurrent requests from both passing the limit check.
    *
    * @param userId - Clerk user ID (owner of the playlist)
    * @param dto    - Request body containing name and optional description
@@ -34,12 +34,20 @@ export class PlaylistService {
    * @returns The created playlist (id, name, description, totalVideos, createdAt)
    */
   async create(userId: string, dto: PlaylistDto) {
-    const playlistCount = await this.playlistRepository.count(userId);
-    if (playlistCount >= PLAYLIST_LIMIT) {
-      this.logger.log(`Playlist limit reached for user ${userId}`);
-      throw new ForbiddenException('Playlist limit reached');
+    try {
+      return await this.playlistRepository.createWithinLimit(
+        userId,
+        dto,
+        PLAYLIST_LIMIT,
+      );
+    } catch (error) {
+      if (error instanceof PlaylistLimitError) {
+        this.logger.log(`Playlist limit reached for user ${userId}`);
+        throw new ForbiddenException('Playlist limit reached');
+      }
+      this.logger.error(`Error creating playlist for userId ${userId}`, error);
+      throw new InternalServerErrorException(`Something went wrong`);
     }
-    return await this.playlistRepository.create(userId, dto);
   }
 
   /**
@@ -124,8 +132,8 @@ export class PlaylistService {
   /**
    * Deletes a playlist owned by the authenticated user.
    *
-   * Same Prisma P2025 handling as update — the compound unique
-   * constraint on (id, userId) prevents cross-user deletion.
+   * Same Prisma P2025 handling as update — the compound where
+   * clause (id + userId) prevents cross-user deletion.
    *
    * @param userId - Clerk user ID (ownership check)
    * @param id     - Playlist ID to delete

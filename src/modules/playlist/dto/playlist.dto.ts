@@ -3,11 +3,13 @@
  * Defines validation rules and Swagger metadata for
  * playlist create / update request payloads.
  */
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -16,8 +18,8 @@ import {
  * PlaylistDto — request body shape for creating or updating a playlist.
  *
  * Fields:
- * - `name` (required, 3–100 chars)
- * - `description` (optional, max 500 chars)
+ * - `name` (required, 3–100 chars, trimmed and whitespace-collapsed)
+ * - `description` (optional, max 500 chars, trimmed and whitespace-collapsed)
  */
 export class PlaylistDto {
   @ApiProperty({
@@ -27,10 +29,16 @@ export class PlaylistDto {
     minLength: 3,
     required: true,
   })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+  )
   @IsString({ message: 'Name must be a string' })
   @IsNotEmpty({ message: 'Name cannot be empty' })
   @MinLength(3, { message: 'Name must be at least 3 characters long' })
   @MaxLength(100, { message: 'Name must be at most 100 characters long' })
+  @Matches(/\S/, {
+    message: 'Name must contain at least one non-whitespace character',
+  })
   name!: string;
 
   @ApiPropertyOptional({
@@ -39,6 +47,9 @@ export class PlaylistDto {
     required: false,
     maxLength: 500,
   })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+  )
   @IsOptional()
   @IsString({ message: 'Description must be a string' })
   @MaxLength(500, {

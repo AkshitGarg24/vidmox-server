@@ -1,5 +1,5 @@
 import { PlaylistService } from './playlist.service';
-import { PlaylistRepository } from './playlist.repository';
+import { PlaylistRepository, PlaylistLimitError } from './playlist.repository';
 import { PlaylistDto } from './dto/playlist.dto';
 import { PLAYLIST_LIMIT } from 'src/configs/constants';
 import {
@@ -56,36 +56,32 @@ describe('PlaylistService', () => {
     createdAt: mockDate,
   };
 
-  const count = jest.fn();
-  const create = jest.fn();
+  const createWithinLimit = jest.fn();
   const findAll = jest.fn();
   const findOne = jest.fn();
   const update = jest.fn();
   const deleteFn = jest.fn();
 
   const mockRepository = {
-    count,
-    create,
+    createWithinLimit,
     findAll,
     findOne,
     update,
     delete: deleteFn,
   } as unknown as jest.Mocked<PlaylistRepository>;
 
-  const mockLogger = {
-    log: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    verbose: jest.fn(),
-  };
+  let loggerLogSpy: jest.SpyInstance;
+  let loggerErrorSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new PlaylistService(
-      mockRepository,
-      mockLogger as unknown as Logger,
-    );
+    loggerLogSpy = jest
+      .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => {});
+    loggerErrorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => {});
+    service = new PlaylistService(mockRepository);
   });
 
   it('should be defined', () => {
@@ -93,29 +89,21 @@ describe('PlaylistService', () => {
   });
 
   describe('create', () => {
-    it('should create a playlist when count is under the limit', async () => {
-      count.mockResolvedValue(PLAYLIST_LIMIT - 1);
-      create.mockResolvedValue(mockPlaylistRecord);
+    it('should create a playlist when the repository succeeds', async () => {
+      createWithinLimit.mockResolvedValue(mockPlaylistRecord);
 
       const result = await service.create(mockUserId, mockDto);
 
       expect(result).toEqual(mockPlaylistRecord);
-      expect(count).toHaveBeenCalledWith(mockUserId);
-      expect(create).toHaveBeenCalledWith(mockUserId, mockDto);
+      expect(createWithinLimit).toHaveBeenCalledWith(
+        mockUserId,
+        mockDto,
+        PLAYLIST_LIMIT,
+      );
     });
 
-    it('should create a playlist at the boundary (PLAYLIST_LIMIT - 1)', async () => {
-      count.mockResolvedValue(PLAYLIST_LIMIT - 1);
-      create.mockResolvedValue(mockPlaylistRecord);
-
-      const result = await service.create(mockUserId, mockDto);
-
-      expect(result).toEqual(mockPlaylistRecord);
-      expect(create).toHaveBeenCalledTimes(1);
-    });
-
-    it('should throw ForbiddenException when count equals the limit', async () => {
-      count.mockResolvedValue(PLAYLIST_LIMIT);
+    it('should throw ForbiddenException when PlaylistLimitError is thrown', async () => {
+      createWithinLimit.mockRejectedValue(new PlaylistLimitError());
 
       await expect(service.create(mockUserId, mockDto)).rejects.toThrow(
         ForbiddenException,
@@ -123,42 +111,23 @@ describe('PlaylistService', () => {
       await expect(service.create(mockUserId, mockDto)).rejects.toThrow(
         'Playlist limit reached',
       );
-      expect(create).not.toHaveBeenCalled();
-    });
-
-    it('should throw ForbiddenException when count exceeds the limit', async () => {
-      count.mockResolvedValue(PLAYLIST_LIMIT + 5);
-
-      await expect(service.create(mockUserId, mockDto)).rejects.toThrow(
-        ForbiddenException,
-      );
-      expect(create).not.toHaveBeenCalled();
     });
 
     it('should log a message when the limit is reached', async () => {
-      count.mockResolvedValue(PLAYLIST_LIMIT);
+      createWithinLimit.mockRejectedValue(new PlaylistLimitError());
 
       await expect(service.create(mockUserId, mockDto)).rejects.toThrow(
         ForbiddenException,
       );
 
-      expect(mockLogger.log).toHaveBeenCalledWith(
+      expect(loggerLogSpy).toHaveBeenCalledWith(
         `Playlist limit reached for user ${mockUserId}`,
       );
     });
 
-    it('should propagate errors from count', async () => {
-      const error = new Error('Database error');
-      count.mockRejectedValue(error);
-
-      await expect(service.create(mockUserId, mockDto)).rejects.toThrow(error);
-      expect(create).not.toHaveBeenCalled();
-    });
-
-    it('should propagate errors from create', async () => {
-      count.mockResolvedValue(PLAYLIST_LIMIT - 1);
-      const error = new Error('Create failed');
-      create.mockRejectedValue(error);
+    it('should propagate other errors directly', async () => {
+      const error = new Error('Database connection failed');
+      createWithinLimit.mockRejectedValue(error);
 
       await expect(service.create(mockUserId, mockDto)).rejects.toThrow(error);
     });
@@ -201,7 +170,7 @@ describe('PlaylistService', () => {
 
       await expect(service.findAll(mockUserId)).rejects.toThrow();
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
         `Error fetching playlists for user ${mockUserId}`,
         error,
       );
@@ -254,7 +223,7 @@ describe('PlaylistService', () => {
         service.findOne(mockUserId, mockPlaylistId),
       ).rejects.toThrow();
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
         `Error fetching playlist ${mockPlaylistId} for user ${mockUserId}`,
         error,
       );
@@ -309,7 +278,7 @@ describe('PlaylistService', () => {
         service.update(mockUserId, mockPlaylistId, { name: 'x' }),
       ).rejects.toThrow();
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
         `Error updating playlist ${mockPlaylistId} for user ${mockUserId}`,
         error,
       );
@@ -358,7 +327,7 @@ describe('PlaylistService', () => {
         service.delete(mockUserId, mockPlaylistId),
       ).rejects.toThrow();
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
         `Error deleting playlist ${mockPlaylistId} for user ${mockUserId}`,
         error,
       );

@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PlaylistRepository } from './playlist.repository';
+import { PlaylistRepository, PlaylistLimitError } from './playlist.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlaylistDto } from './dto/playlist.dto';
+import { PLAYLIST_LIMIT } from 'src/configs/constants';
 
 describe('PlaylistRepository', () => {
   let repository: PlaylistRepository;
@@ -32,8 +33,9 @@ describe('PlaylistRepository', () => {
     createdAt: mockDate,
   };
 
-  const mockCount = jest.fn<Promise<number>, [object]>();
-  const mockCreate = jest.fn<
+  const mockTransaction = jest.fn();
+  const mockTxCount = jest.fn<Promise<number>, [object]>();
+  const mockTxCreate = jest.fn<
     Promise<object>,
     [{ data: Record<string, unknown> }]
   >();
@@ -49,15 +51,21 @@ describe('PlaylistRepository', () => {
   >();
 
   const mockPrismaService = {
+    $transaction: mockTransaction,
     playlist: {
-      count: mockCount,
-      create: mockCreate,
       findMany: mockFindMany,
       findFirst: mockFindFirst,
       update: mockUpdate,
       delete: mockDelete,
     },
   };
+
+  function setupTransaction() {
+    mockTransaction.mockImplementation(
+      (cb: (tx: Record<string, unknown>) => unknown) =>
+        cb({ playlist: { count: mockTxCount, create: mockTxCreate } }),
+    );
+  }
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -76,42 +84,26 @@ describe('PlaylistRepository', () => {
     expect(repository).toBeDefined();
   });
 
-  describe('count', () => {
-    it('should return the number of playlists for a user', async () => {
-      mockCount.mockResolvedValue(3);
+  describe('createWithinLimit', () => {
+    it('should create a playlist when count is under the limit', async () => {
+      setupTransaction();
+      mockTxCount.mockResolvedValue(PLAYLIST_LIMIT - 1);
+      mockTxCreate.mockResolvedValue(mockPlaylistSummary);
 
-      const result = await repository.count(mockUserId);
-
-      expect(result).toBe(3);
-      expect(mockCount).toHaveBeenCalledWith({
-        where: { userId: mockUserId },
-      });
-    });
-
-    it('should return 0 when user has no playlists', async () => {
-      mockCount.mockResolvedValue(0);
-
-      const result = await repository.count(mockUserId);
-
-      expect(result).toBe(0);
-    });
-
-    it('should propagate Prisma errors', async () => {
-      const error = new Error('Database connection failed');
-      mockCount.mockRejectedValue(error);
-
-      await expect(repository.count(mockUserId)).rejects.toThrow(error);
-    });
-  });
-
-  describe('create', () => {
-    it('should create a playlist with the correct data and return projected fields', async () => {
-      mockCreate.mockResolvedValue(mockPlaylistSummary);
-
-      const result = await repository.create(mockUserId, mockDto);
+      const result = await repository.createWithinLimit(
+        mockUserId,
+        mockDto,
+        PLAYLIST_LIMIT,
+      );
 
       expect(result).toEqual(mockPlaylistSummary);
-      expect(mockCreate).toHaveBeenCalledWith({
+      expect(mockTransaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: 'Serializable',
+      });
+      expect(mockTxCount).toHaveBeenCalledWith({
+        where: { userId: mockUserId },
+      });
+      expect(mockTxCreate).toHaveBeenCalledWith({
         data: {
           userId: mockUserId,
           name: mockDto.name,
@@ -128,40 +120,71 @@ describe('PlaylistRepository', () => {
     });
 
     it('should create a playlist when description is not provided', async () => {
+      setupTransaction();
       const dtoNoDesc: PlaylistDto = { name: 'Minimal' };
       const expected = {
         ...mockPlaylistSummary,
         name: 'Minimal',
         description: null,
       };
-      mockCreate.mockResolvedValue(expected);
+      mockTxCount.mockResolvedValue(PLAYLIST_LIMIT - 1);
+      mockTxCreate.mockResolvedValue(expected);
 
-      const result = await repository.create(mockUserId, dtoNoDesc);
+      const result = await repository.createWithinLimit(
+        mockUserId,
+        dtoNoDesc,
+        PLAYLIST_LIMIT,
+      );
 
       expect(result).toEqual(expected);
-      expect(mockCreate).toHaveBeenCalledWith({
-        data: {
-          userId: mockUserId,
-          name: 'Minimal',
-          description: undefined,
-        },
-        select: {
-          name: true,
-          description: true,
-          id: true,
-          totalVideos: true,
-          createdAt: true,
-        },
-      });
+      expect(mockTxCreate.mock.calls[0][0]).toHaveProperty(
+        'data.name',
+        'Minimal',
+      );
     });
 
-    it('should propagate Prisma errors', async () => {
-      const error = new Error('Unique constraint violation');
-      mockCreate.mockRejectedValue(error);
+    it('should throw PlaylistLimitError when count equals the limit', async () => {
+      setupTransaction();
+      mockTxCount.mockResolvedValue(PLAYLIST_LIMIT);
 
-      await expect(repository.create(mockUserId, mockDto)).rejects.toThrow(
-        error,
-      );
+      await expect(
+        repository.createWithinLimit(mockUserId, mockDto, PLAYLIST_LIMIT),
+      ).rejects.toThrow(PlaylistLimitError);
+
+      expect(mockTxCount).toHaveBeenCalledWith({
+        where: { userId: mockUserId },
+      });
+      expect(mockTxCreate).not.toHaveBeenCalled();
+    });
+
+    it('should throw PlaylistLimitError when count exceeds the limit', async () => {
+      setupTransaction();
+      mockTxCount.mockResolvedValue(PLAYLIST_LIMIT + 5);
+
+      await expect(
+        repository.createWithinLimit(mockUserId, mockDto, PLAYLIST_LIMIT),
+      ).rejects.toThrow(PlaylistLimitError);
+
+      expect(mockTxCreate).not.toHaveBeenCalled();
+    });
+
+    it('should use the provided limit value', async () => {
+      setupTransaction();
+      const customLimit = 5;
+      mockTxCount.mockResolvedValue(5);
+
+      await expect(
+        repository.createWithinLimit(mockUserId, mockDto, customLimit),
+      ).rejects.toThrow(PlaylistLimitError);
+    });
+
+    it('should propagate transaction errors', async () => {
+      const error = new Error('Transaction failed');
+      mockTransaction.mockRejectedValue(error);
+
+      await expect(
+        repository.createWithinLimit(mockUserId, mockDto, PLAYLIST_LIMIT),
+      ).rejects.toThrow(error);
     });
   });
 
@@ -220,14 +243,21 @@ describe('PlaylistRepository', () => {
   });
 
   describe('findOne', () => {
-    it('should return the full playlist record when found', async () => {
-      mockFindFirst.mockResolvedValue(mockPlaylistFull);
+    it('should return the projected playlist record when found', async () => {
+      mockFindFirst.mockResolvedValue(mockPlaylistSummary);
 
       const result = await repository.findOne(mockUserId, mockPlaylistId);
 
-      expect(result).toEqual(mockPlaylistFull);
+      expect(result).toEqual(mockPlaylistSummary);
       expect(mockFindFirst).toHaveBeenCalledWith({
         where: { userId: mockUserId, id: mockPlaylistId },
+        select: {
+          name: true,
+          description: true,
+          id: true,
+          totalVideos: true,
+          createdAt: true,
+        },
       });
     });
 
@@ -247,6 +277,13 @@ describe('PlaylistRepository', () => {
       expect(result).toBeNull();
       expect(mockFindFirst).toHaveBeenCalledWith({
         where: { userId: 'other-user', id: mockPlaylistId },
+        select: {
+          name: true,
+          description: true,
+          id: true,
+          totalVideos: true,
+          createdAt: true,
+        },
       });
     });
 
@@ -337,11 +374,9 @@ describe('PlaylistRepository', () => {
 
       await repository.delete(mockUserId, mockPlaylistId);
 
-      expect(mockDelete).toHaveBeenCalledWith(
-        expect.objectContaining({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          where: expect.objectContaining({ userId: mockUserId }),
-        }),
+      expect(mockDelete.mock.calls[0][0]).toHaveProperty(
+        'where.userId',
+        mockUserId,
       );
     });
 

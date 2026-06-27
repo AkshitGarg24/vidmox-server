@@ -7,48 +7,59 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlaylistDto } from './dto/playlist.dto';
+import { Prisma } from 'generated/prisma/client';
+
+/**
+ * Thrown by createWithinLimit when the user already has `limit` playlists.
+ * The service layer catches this and translates it into a ForbiddenException.
+ */
+export class PlaylistLimitError extends Error {
+  constructor() {
+    super('Playlist limit reached');
+    this.name = 'PlaylistLimitError';
+  }
+}
 
 @Injectable()
 export class PlaylistRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Returns the total number of playlists owned by a user.
-   * Used by the service to enforce the per-user playlist cap.
+   * Atomically checks the per-user playlist cap and creates a new playlist.
    *
-   * @param userId - Clerk user ID
-   */
-  async count(userId: string) {
-    return this.prisma.playlist.count({
-      where: {
-        userId,
-      },
-    });
-  }
-
-  /**
-   * Creates a new playlist for the given user.
-   * Only projected fields are returned (no internal fields leaked).
+   * Uses a Prisma interactive transaction with Serializable isolation so
+   * two concurrent requests cannot both pass the limit check.
    *
    * @param userId - Clerk user ID (owner)
    * @param dto    - Playlist name and optional description
+   * @param limit  - Maximum number of playlists allowed per user
+   * @throws PlaylistLimitError if the user already has `limit` playlists
    * @returns The created playlist (id, name, description, totalVideos, createdAt)
    */
-  async create(userId: string, dto: PlaylistDto) {
-    return this.prisma.playlist.create({
-      data: {
-        userId,
-        name: dto.name,
-        description: dto.description,
+  async createWithinLimit(userId: string, dto: PlaylistDto, limit: number) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const count = await tx.playlist.count({ where: { userId } });
+        if (count >= limit) {
+          throw new PlaylistLimitError();
+        }
+        return tx.playlist.create({
+          data: {
+            userId,
+            name: dto.name,
+            description: dto.description,
+          },
+          select: {
+            name: true,
+            description: true,
+            id: true,
+            totalVideos: true,
+            createdAt: true,
+          },
+        });
       },
-      select: {
-        name: true,
-        description: true,
-        id: true,
-        totalVideos: true,
-        createdAt: true,
-      },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   /**
@@ -75,8 +86,7 @@ export class PlaylistRepository {
 
   /**
    * Finds a single playlist scoped to the user.
-   * Returns the full record (no select projection) so the service
-   * can inspect internal fields if needed.
+   * Only projected fields are returned (same shape as createWithinLimit).
    *
    * @param userId - Clerk user ID (ownership scope)
    * @param id     - Playlist ID
@@ -87,6 +97,13 @@ export class PlaylistRepository {
       where: {
         userId,
         id,
+      },
+      select: {
+        name: true,
+        description: true,
+        id: true,
+        totalVideos: true,
+        createdAt: true,
       },
     });
   }

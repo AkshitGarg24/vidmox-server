@@ -32,8 +32,9 @@ model Playlist {
   name        String
   description String?
   limit       Int      @default(10) @map("playlist_limit")
-  totalVideos Int?     @default(0) @map("totalVideos")
+  totalVideos Int      @default(0) @map("totalVideos")
   createdAt   DateTime @default(now()) @map("created_at")
 
+  @@index([userId])
   @@map("playlist")
 }

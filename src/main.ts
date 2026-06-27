@@ -7,9 +7,7 @@ import { ConsoleLogger, ValidationPipe, VersioningType } from '@nestjs/common';
  */
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger: new ConsoleLogger({
-      json: true,
-    }),
+    logger: new ConsoleLogger(),
     bufferLogs: true,
   });
   app.setGlobalPrefix('api');

@@ -69,7 +69,7 @@ export class PlaylistController {
    */
   @Get(':id')
   @ApiOperation({ summary: 'Get a playlist by id' })
-  async findOne(@Req() req: Request, @Param() id: string) {
+  async findOne(@Req() req: Request, @Param('id') id: string) {
     if (!req.user) throw new UnauthorizedException('User not found');
     return this.playlistService.findOne(req.user.id, id);
   }
@@ -88,7 +88,7 @@ export class PlaylistController {
   @ApiOperation({ summary: 'Update a playlist by id' })
   async update(
     @Req() req: Request,
-    @Param() id: string,
+    @Param('id') id: string,
     @Body() dto: PlaylistDto,
   ) {
     if (!req.user) throw new UnauthorizedException('User not found');
@@ -106,7 +106,7 @@ export class PlaylistController {
    */
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a playlist by id' })
-  async delete(@Req() req: Request, @Param() id: string) {
+  async delete(@Req() req: Request, @Param('id') id: string) {
     if (!req.user) throw new UnauthorizedException('User not found');
     return this.playlistService.delete(req.user.id, id);
   }
