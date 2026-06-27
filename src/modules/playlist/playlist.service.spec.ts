@@ -120,16 +120,16 @@ describe('PlaylistService', () => {
         ForbiddenException,
       );
 
-      expect(loggerLogSpy).toHaveBeenCalledWith(
-        `Playlist limit reached for user ${mockUserId}`,
-      );
+      expect(loggerLogSpy).toHaveBeenCalledWith('Playlist limit reached');
     });
 
-    it('should propagate other errors directly', async () => {
+    it('should wrap unexpected errors in InternalServerErrorException', async () => {
       const error = new Error('Database connection failed');
       createWithinLimit.mockRejectedValue(error);
 
-      await expect(service.create(mockUserId, mockDto)).rejects.toThrow(error);
+      await expect(service.create(mockUserId, mockDto)).rejects.toThrow(
+        InternalServerErrorException,
+      );
     });
   });
 
@@ -171,7 +171,7 @@ describe('PlaylistService', () => {
       await expect(service.findAll(mockUserId)).rejects.toThrow();
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
-        `Error fetching playlists for user ${mockUserId}`,
+        'Error fetching playlists',
         error,
       );
     });
@@ -224,7 +224,7 @@ describe('PlaylistService', () => {
       ).rejects.toThrow();
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
-        `Error fetching playlist ${mockPlaylistId} for user ${mockUserId}`,
+        `Error fetching playlist ${mockPlaylistId}`,
         error,
       );
     });
@@ -279,7 +279,7 @@ describe('PlaylistService', () => {
       ).rejects.toThrow();
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
-        `Error updating playlist ${mockPlaylistId} for user ${mockUserId}`,
+        `Error updating playlist ${mockPlaylistId}`,
         error,
       );
     });
@@ -328,7 +328,7 @@ describe('PlaylistService', () => {
       ).rejects.toThrow();
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
-        `Error deleting playlist ${mockPlaylistId} for user ${mockUserId}`,
+        `Error deleting playlist ${mockPlaylistId}`,
         error,
       );
     });

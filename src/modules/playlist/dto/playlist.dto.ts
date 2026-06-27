@@ -48,7 +48,12 @@ export class PlaylistDto {
     maxLength: 500,
   })
   @Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+    typeof value === 'string'
+      ? (() => {
+          const s = value.trim().replace(/\s+/g, ' ');
+          return s || undefined;
+        })()
+      : value,
   )
   @IsOptional()
   @IsString({ message: 'Description must be a string' })

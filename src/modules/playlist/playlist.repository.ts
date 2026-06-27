@@ -30,36 +30,60 @@ export class PlaylistRepository {
    * Uses a Prisma interactive transaction with Serializable isolation so
    * two concurrent requests cannot both pass the limit check.
    *
+   * Retries up to 3 times on P2034 serialisation conflicts (write conflicts
+   * under concurrent load). All other errors — including PlaylistLimitError —
+   * propagate immediately. If retries are exhausted the last P2034 error is
+   * thrown and surfaces as a 500 to the caller.
+   *
    * @param userId - Clerk user ID (owner)
    * @param dto    - Playlist name and optional description
    * @param limit  - Maximum number of playlists allowed per user
    * @throws PlaylistLimitError if the user already has `limit` playlists
+   * @throws Prisma.PrismaClientKnownRequestError (P2034) after exhausting retries
    * @returns The created playlist (id, name, description, totalVideos, createdAt)
    */
   async createWithinLimit(userId: string, dto: PlaylistDto, limit: number) {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const count = await tx.playlist.count({ where: { userId } });
-        if (count >= limit) {
-          throw new PlaylistLimitError();
+    const MAX_RETRIES = 3;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const count = await tx.playlist.count({ where: { userId } });
+            if (count >= limit) {
+              throw new PlaylistLimitError();
+            }
+            return tx.playlist.create({
+              data: {
+                userId,
+                name: dto.name,
+                description: dto.description,
+              },
+              select: {
+                name: true,
+                description: true,
+                id: true,
+                totalVideos: true,
+                createdAt: true,
+              },
+            });
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034'
+        ) {
+          lastError = error;
+          continue;
         }
-        return tx.playlist.create({
-          data: {
-            userId,
-            name: dto.name,
-            description: dto.description,
-          },
-          select: {
-            name: true,
-            description: true,
-            id: true,
-            totalVideos: true,
-            createdAt: true,
-          },
-        });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+        throw error;
+      }
+    }
+
+    throw lastError;
   }
 
   /**

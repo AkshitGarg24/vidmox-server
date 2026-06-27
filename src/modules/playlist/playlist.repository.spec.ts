@@ -3,6 +3,7 @@ import { PlaylistRepository, PlaylistLimitError } from './playlist.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlaylistDto } from './dto/playlist.dto';
 import { PLAYLIST_LIMIT } from 'src/configs/constants';
+import { Prisma } from 'generated/prisma/client';
 
 describe('PlaylistRepository', () => {
   let repository: PlaylistRepository;
@@ -185,6 +186,42 @@ describe('PlaylistRepository', () => {
       await expect(
         repository.createWithinLimit(mockUserId, mockDto, PLAYLIST_LIMIT),
       ).rejects.toThrow(error);
+    });
+
+    it('should retry on P2034 write conflict and succeed', async () => {
+      setupTransaction();
+      const p2034Error = new Prisma.PrismaClientKnownRequestError(
+        'Transaction failed due to write conflict',
+        { code: 'P2034', clientVersion: '5.22.0' },
+      );
+
+      mockTransaction.mockRejectedValueOnce(p2034Error);
+      mockTxCount.mockResolvedValue(PLAYLIST_LIMIT - 1);
+      mockTxCreate.mockResolvedValue(mockPlaylistSummary);
+
+      const result = await repository.createWithinLimit(
+        mockUserId,
+        mockDto,
+        PLAYLIST_LIMIT,
+      );
+
+      expect(result).toEqual(mockPlaylistSummary);
+      expect(mockTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('should throw P2034 after exhausting retries', async () => {
+      const p2034Error = new Prisma.PrismaClientKnownRequestError(
+        'Transaction failed due to write conflict',
+        { code: 'P2034', clientVersion: '5.22.0' },
+      );
+
+      mockTransaction.mockRejectedValue(p2034Error);
+
+      await expect(
+        repository.createWithinLimit(mockUserId, mockDto, PLAYLIST_LIMIT),
+      ).rejects.toThrow(p2034Error);
+
+      expect(mockTransaction).toHaveBeenCalledTimes(3);
     });
   });
 

@@ -42,10 +42,10 @@ export class PlaylistService {
       );
     } catch (error) {
       if (error instanceof PlaylistLimitError) {
-        this.logger.log(`Playlist limit reached for user ${userId}`);
+        this.logger.log('Playlist limit reached');
         throw new ForbiddenException('Playlist limit reached');
       }
-      this.logger.error(`Error creating playlist for userId ${userId}`, error);
+      this.logger.error('Error creating playlist', error);
       throw new InternalServerErrorException(`Something went wrong`);
     }
   }
@@ -63,7 +63,7 @@ export class PlaylistService {
     try {
       return await this.playlistRepository.findAll(userId);
     } catch (error) {
-      this.logger.error(`Error fetching playlists for user ${userId}`, error);
+      this.logger.error('Error fetching playlists', error);
       throw new InternalServerErrorException(`Something went wrong`);
     }
   }
@@ -90,10 +90,7 @@ export class PlaylistService {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      this.logger.error(
-        `Error fetching playlist ${id} for user ${userId}`,
-        error,
-      );
+      this.logger.error(`Error fetching playlist ${id}`, error);
       throw new InternalServerErrorException(`Something went wrong`);
     }
   }
@@ -121,10 +118,7 @@ export class PlaylistService {
       ) {
         throw new NotFoundException('Playlist not found');
       }
-      this.logger.error(
-        `Error updating playlist ${id} for user ${userId}`,
-        error,
-      );
+      this.logger.error(`Error updating playlist ${id}`, error);
       throw new InternalServerErrorException('Something went wrong');
     }
   }
@@ -151,10 +145,7 @@ export class PlaylistService {
       ) {
         throw new NotFoundException('Playlist not found');
       }
-      this.logger.error(
-        `Error deleting playlist ${id} for user ${userId}`,
-        error,
-      );
+      this.logger.error(`Error deleting playlist ${id}`, error);
       throw new InternalServerErrorException('Something went wrong');
     }
   }
