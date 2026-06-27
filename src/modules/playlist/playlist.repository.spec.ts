@@ -358,6 +358,13 @@ describe('PlaylistRepository', () => {
       expect(mockUpdate).toHaveBeenCalledWith({
         where: { id: mockPlaylistId, userId: mockUserId },
         data: { name: 'Updated Name', description: 'Updated desc' },
+        select: {
+          name: true,
+          description: true,
+          id: true,
+          totalVideos: true,
+          createdAt: true,
+        },
       });
     });
 
@@ -403,6 +410,13 @@ describe('PlaylistRepository', () => {
       expect(result).toEqual(mockPlaylistFull);
       expect(mockDelete).toHaveBeenCalledWith({
         where: { id: mockPlaylistId, userId: mockUserId },
+        select: {
+          name: true,
+          description: true,
+          id: true,
+          totalVideos: true,
+          createdAt: true,
+        },
       });
     });
 

@@ -152,6 +152,13 @@ export class PlaylistRepository {
         name: dto.name,
         description: dto.description,
       },
+      select: {
+        name: true,
+        description: true,
+        id: true,
+        totalVideos: true,
+        createdAt: true,
+      },
     });
   }
 
@@ -170,6 +177,13 @@ export class PlaylistRepository {
       where: {
         id,
         userId,
+      },
+      select: {
+        name: true,
+        description: true,
+        id: true,
+        totalVideos: true,
+        createdAt: true,
       },
     });
   }
