@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { LRUCache } from 'lru-cache';
 
 export interface CachedKey {
@@ -8,7 +8,7 @@ export interface CachedKey {
 }
 
 export const API_KEY_CACHE = 'API_KEY_CACHE';
-
+@Global()
 @Module({
   providers: [
     {
