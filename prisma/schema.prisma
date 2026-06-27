@@ -25,3 +25,15 @@ model ApiKey {
   @@index([userId, revokedAt])
   @@map("api_key")
 }
+
+model Playlist {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  name        String
+  description String?
+  limit       Int      @default(10) @map("playlist_limit")
+  totalVideos Int?     @default(0) @map("totalVideos")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("playlist")
+}
